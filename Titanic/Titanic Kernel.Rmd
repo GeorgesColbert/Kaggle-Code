@@ -1,0 +1,367 @@
+---
+title: "Untitled"
+author: "Georges Colbert"
+date: "3/8/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(readr)
+library(tree)
+library(caret)
+titan.train <- read_csv("Desktop/Projects/Kaggle/Titanic/train.csv")
+titan.test <- read_csv("Desktop/Projects/Kaggle/Titanic/test.csv")
+
+
+
+
+```
+
+My First Kaggle submissions, and obviously I'm very excited to see how accurate a model I can built!
+
+ 
+
+Trying to bring some form of originality to my Kernel, I thought it would interesting to see if being part of a family-unit, also known as the nuclear family, is a benefit or a burden in a life-or-death crisis. Society generally endorses the nuclear family as a bedrock of a stable community, promoting it as a more prosperous environment for children to grow up in and a more reliable unit in civic engagement than single individuals. What I'm curious about is to see if, in a lethal moment such as being on a sinking ship, does one benefit from being in a group that is concerned about your survival, or does the family unit slow you down when time is of essence. 
+
+There are three parts to my markdown as follows:
+
+
+ Introduction
+ Feature Engineering
+ model interpratation
+ prediction
+
+
+First thing I want to do is take care of all NA values in the dataset. My aim is to identify which variables have NA values, and based on how many values in the column are missing I will assume what best strategy to replace these NA values.
+
+
+
+```{r}
+### check which columns have na values
+
+colnames(titan.train)[ apply(titan.train, 2, anyNA) ]
+
+```
+
+
+
+```{r}
+###count number of na rows in those columns
+
+sum(is.na(titan.train$Cabin))
+sum(is.na(titan.train$Embarked))
+sum(is.na(titan.train$Age))
+
+
+```
+
+The Cabin column has 687 values missing, Embarked has 2 missing values, and Age has 177 missing values. I decided to drop the Cabin column, since it was missing 687 out of 889 variables, and I also dropped the two observations with NA values in Embarked. For the Age missing values, I decide to replace the value with median age of passengers. 
+
+```{r}
+############ drop cabin, give most common value to embarked and give them median age
+
+titan.train$Cabin <- NULL
+
+table(titan.train$Embarked)
+
+titan.train <- titan.train%>% drop_na(Embarked)
+
+
+titan.train <- titan.train %>% mutate_at(vars(Age), ~ifelse(is.na(.), median(., na.rm = TRUE), .))
+
+
+```
+
+
+
+To measure the impact that being part of a nuclear - family has on a passenger, I have to create a variable that indicated if a persone is traveling as a family or not. The new variables, NukeFM_or_Not, marks a passenger as part of a family if this person is traveling with at least one sibling and 1 parent (Disclaimer: According to wikipedia a nuclear-family is a couple with at least one dependent child, meaning two siblings traveling with one parents would be classified as a family unit but wouldnt technically be a nuclear family).
+
+
+
+```{r}
+
+#Family unit or not
+
+titan.train$FM_or_Not <- ifelse( titan.train$SibSp >=1 & titan.train$Parch >= 1,1,0)
+
+
+```
+
+Looking through the  passenger titles, I noticed that while it would be hard to seperate married man traveling alone from bachelors, I could use the "Miss" title to identify single women over 18. This could help me discern the survival differences between single in a time of crisis  and being married. 
+
+
+```{r}
+
+
+########## create a variable that designates if they are a family/nuclear family
+
+# 
+titan.train$Miss_or_Not <- ifelse(grepl("Miss",titan.train$Name) & titan.train$Age > 18, 1,0 ) 
+
+
+```
+
+Also, it would be good to have a variable that indicates the number of people 
+
+
+Modeling 
+
+To accurately measure the influence my two variables may have, I want a model that's both pretty reliable in terms of accuracy but also easy to interpret. For this reason I picked a classification tree model, because i can create a flow-chart that shows how variables affect passenger survival. While I realise that a more accurate tree model would be to use Random Forest, The increased accuracy I would get with RF would be offest by a loss of interpretability. The gini coefficent would help me understand the importance of each variables in RF, but I will not be able to understand if the variables has a positive or negative effect on survival. 
+
+
+First thing I'll do is factor all numerical variables, and split the data into a training set, a validation set to identify the correct pruned tree, and a test set to predict on. When deciding how to split the intial training set from Kaggle, I went with the 50/50 split, and models public score was 75.12%. Thinking that the the low score might be due to the split, I decided to retry with a 85/15 split, and my score improved to 78.47%. To slightly increase the score still, I'm retrying with a 90/10 split. 
+
+```{r}
+
+######## turn survived into a factor
+
+titan.train$Survived <- factor(titan.train$Survived, levels = c(0,1))
+titan.train$Pclass <- factor(titan.train$Pclass, levels = c(3,2,1), ordered = TRUE)
+titan.train$Sex<- as.factor(titan.train$Sex)
+titan.train$Embarked <- as.factor(titan.train$Embarked)
+titan.train$Miss_or_Not <- as.factor(titan.train$Miss_or_Not)
+titan.train$FM_or_Not <- as.factor(titan.train$FM_or_Not)
+
+
+titan.train$Ticket <- gsub("^.*\\s", "", titan.train$Ticket)
+
+titan.train$Ticket <- as.numeric(titan.train$Ticket)
+
+
+####### Remove name 
+
+titan.train$Name <- NULL
+
+
+
+
+
+###################### create a decision tree
+
+
+set.seed(123)
+inTrain <- sample(nrow(titan.train), 0.9*nrow(titan.train))
+#
+train <- data.frame(titan.train[inTrain,])
+validation <- data.frame(titan.train[-inTrain,])
+
+# Computing the error rate on validation data (full tree)
+
+tree.titanic=tree(Survived~.-PassengerId,data=train)
+tree.pred=predict(tree.titanic,validation,type="class")
+confusion = table(tree.pred,validation$Survived)
+confusion
+Error = (confusion[1,2]+confusion[2,1])/sum(confusion)
+Error
+
+(accuracy <- (confusion[1,1]+confusion[2,2])/sum(confusion))
+
+
+
+```
+
+Checking how my decision tree model, trained on the train data set, would do at predicting the classification of items in the validation data set, we see that there's an error rate 11.2% and a accuracy rate of 88.7%. Not Bad! However, the decision tree model is not pruned, and therefore at risk of overfitting. To avoid this, the following code runs a for loop tries to idenitfy the tree with the lowest number of terminal nodes that still has a low error rate.  
+
+
+```{r}
+#############################################
+
+Size <- 1:8
+Error <- rep(0,length(Size))
+
+# For tree with one terminal node the prediction is the modal class
+table(validation$Survived)
+# There are 40 "Yes" and 60 "High"
+(Error[1] = 53/89)
+
+library(caret)
+
+for (i in 2:8) {
+  prune.titanic=prune.misclass(tree.titanic,best=i)
+  tree.pred=predict(prune.titanic,validation,type="class")
+  confusion = table(tree.pred,validation$Survived)
+  Error[i] = (confusion[1,2]+confusion[2,1])/sum(confusion)
+}
+
+plot(Size,Error,type = "o",xlab="Tree Size",ylab="Error Rate",col="blue")
+(z = which.min(Error))
+#
+
+
+```
+
+By plotting a error rate of different trees of different sizes, I see that the best tree size with the lowest error rate is 5. 
+
+Now I have to find the NA values in the test set and decide how to deal with them. 
+
+```{r}
+
+#####################################
+
+
+colnames(titan.test)[ apply(titan.test, 2, anyNA) ]
+
+
+
+```
+
+It seems Age, Fare and Cabin have NA values. 
+
+```{r}
+
+###count number of na rows in those columns
+
+sum(is.na(titan.test$Age))
+sum(is.na(titan.test$Fare))
+sum(is.na(titan.test$Cabin))
+
+
+
+```
+
+Age has 86 NA values, Fare has 1 NA value, and Cabin has 327 Na values. Similar to what I did with the training set, I'll drop the cabin column. I'll input the median Fare and Age values in each respective missing NA value.  I'll create similar features, Miss_or_Not and NukeFM_or_Not.
+
+
+```{r}
+
+#### MAKE cabin null, median value for the Fare and median for the Age
+titan.test$Cabin <- NULL
+
+titan.test <- titan.test %>% mutate_at(vars(Age), ~ifelse(is.na(.), median(., na.rm = TRUE), .))
+
+titan.test <- titan.test %>% mutate_at(vars(Fare), ~ifelse(is.na(.), median(., na.rm = TRUE), .))
+
+# create Miss_or_Not and FM 
+
+titan.test$Miss_or_Not <- ifelse(grepl("Miss",titan.test$Name) & titan.test$Age > 18, 1,0 ) 
+
+
+#Family unit or not
+
+titan.test$FM_or_Not <- ifelse( titan.test$SibSp >=1 & titan.test$Parch >= 1,1,0)
+
+```
+
+Having found out the ideal tree size, I now can apply my tree model.
+
+```{r}
+
+######## turn survived into a factor
+
+titan.test$Survived <- factor(titan.test$Survived, levels = c(0,1))
+titan.test$Pclass <- factor(titan.test$Pclass, levels = c(3,2,1), ordered = TRUE)
+titan.test$Sex<- as.factor(titan.test$Sex)
+titan.test$Embarked <- as.factor(titan.test$Embarked)
+titan.test$Miss_or_Not <- as.factor(titan.test$Miss_or_Not)
+titan.test$FM_or_Not <- as.factor(titan.test$FM_or_Not)
+
+titan.test$Ticket <- gsub("^.*\\s", "", titan.test$Ticket)
+
+titan.test$Ticket <- as.numeric(titan.test$Ticket)
+
+
+####### Remove name 
+
+titan.test$Name <- NULL
+
+titan.test$Ticket <- NULL
+
+
+
+
+
+# Now plot the best pruned tree
+prune.titanic=prune.misclass(tree.titanic,best=z)
+plot(prune.titanic)
+text(prune.titanic,pretty=0)
+tree.pred=predict(prune.titanic,titan.test,type="class")
+
+
+
+
+```
+
+
+
+The plotted pruned tree indicated thats the most deciding feature in indicating if someone survived was Sex. Unfortunately, The features I created, NukeFM_or_Not and Miss_or_Not, don't have an impact on survival. 
+
+
+According to this model, predicting the survival of female passangers is simplest, and dependent on the least number of variables.  Any Female Passenger that belonged to the First or Second class is predicted to survive. Amongst women that were in the Third class, only does who's Fare was less than 23.35 survived.
+
+For Men, survival is bit more complicated.  Amongst the men who had bought the cheapest fares (Less than 26.2688),the model predicts that only the boys who are younger than 13.5 survived. Interestingly, for men being part of a family wasn't a decider, but being part of a family of 5 or more meant the model predicts he will not survived.
+
+
+
+
+
+
+
+```{r}
+######## attach prediction to test set
+
+titan.test$Survived <- tree.pred
+
+
+Kaggle.submit <- titan.test %>% select("PassengerId", "Survived")
+
+write.csv(Kaggle.submit, file = "Desktop/Projects/Kaggle/Titanic/Kagglesub2.csv", row.names=FALSE)
+
+
+
+
+
+```
+
+
+
+
+```{r}
+
+
+
+
+
+```
+
+
+
+
+
+
+
+```{r}
+
+
+
+
+
+```
+
+
+
+
+`
+
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
